@@ -2,9 +2,44 @@
 <html lang="en" dir="ltr">
   <head>
     <meta charset="utf-8">
-    <title></title>
+    <title>TextureFlow</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mnist/1.1.0/mnist.js" charset="utf-8"></script>
   </head>
   <body>
     <script src="txf.js" charset="utf-8"></script>
+    <script type="text/javascript">
+      let set = mnist.set(7000, 1000);
+      let training_set = set.training;
+      let test_set = set.test
+      var train_x = [];
+      var train_y = [];
+      var test_x = [];
+      var test_y = [];
+      for (let i = 0; i < training_set.length; i++) {
+        train_x.push(training_set[i].input);
+        train_y.push(training_set[i].output);
+      }
+      for (let i = 0; i < test_set.length; i++) {
+        test_x.push(test_set[i].input);
+        test_y.push(test_set[i].output);
+      }
+      const data = txf.texture(train_x);
+      const labels = txf.texture(train_y);
+
+      const model = txf.sequential([{nodes: 10, input_size: 784}]);  // Logistic regression
+      model.compile();
+      console.log("Training...");
+      model.fit(data, labels, epochs=100, regularization_rate=0.01);
+
+      var guesses = model.feedforward(txf.column_append(txf.texture(test_x))).to_array();
+      function compare(n) {
+        return guesses[n].indexOf(Math.max(...guesses[n])) === test_y[n].indexOf(1)
+      }
+      var n = 0;
+      for (var i = 0; i < test_y.length; i++) {
+        n += compare(i);
+      }
+      console.log("Accuracy on test data: "+n/test_y.length)
+    </script>
   </body>
 </html>
