@@ -324,7 +324,7 @@
           gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
           this.weights[0] = temp;
         } else {
-          for (let nx = this.weights.length-1; nx >= 0; nx--) {
+          for (var nx = this.weights.length-1; nx >= 0; nx--) {
             fs_source = [
               "precision mediump float;",
               "varying vec2 v_texcoord;"
@@ -981,8 +981,8 @@
 
   function id(rows) {
     var arr = [];
-    for (let i = 0; i < rows; i++) {
-      for (let j = 0; j < rows; j++) {
+    for (var i = 0; i < rows; i++) {
+      for (var j = 0; j < rows; j++) {
         arr.push((i === j) | 0);
       }
     }
