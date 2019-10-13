@@ -189,23 +189,41 @@
       layers: [],
       regularization_rate: "0.0",
       gradient_data: 0,
+      optimizer: "rprop",
       compile: function() {
         for (var i = 0; i < this.structure.length; i++) {
           if (!i) {
-            this.weights[i] = el(ra(this.structure[i].input_size+1, this.structure[i].nodes), "x*0.0000002-0.0000001");
+            this.weights[i] = el(ra(this.structure[i].input_size+1, this.structure[i].nodes), "x*0.0002-0.0001");
           } else {
-            this.weights[i] = el(ra(this.structure[i-1].nodes+1, this.structure[i].nodes), "x*0.0000002-0.0000001");
+            this.weights[i] = el(ra(this.structure[i-1].nodes+1, this.structure[i].nodes), "x*0.0002-0.0001");
           }
         }
       },
-      fit: function(data, labels, epochs, regularization_rate="0.0") {
+      fit: function(data, labels, epochs, batch_size=data.rows, regularization_rate="0.0", accelerated_learning=false, on_batch_end=0) {
         this.regularization_rate = regularization_rate;
-        var biased_data = co(data);
-        for (var e = 1; e <= epochs; e++) {
-          this.feedforward(biased_data);
-          this.backpropagate(biased_data, labels, e);
-          console.log("Epoch "+e+" done.");
+        var biased_data = co(data).to_array();
+        var arrayed_labels = labels.to_array();
+        var batches_x = [];
+        var batches_y = [];
+        for (var i = 0; i < biased_data.length; i+=batch_size) {
+          batches_x.push(te(biased_data.slice(i, i+batch_size)));
+          batches_y.push(te(arrayed_labels.slice(i, i+batch_size)));
         }
+        var e = 0;
+        var b = 0;
+        var interval = setInterval(() => {
+          this.feedforward(batches_x[Math.floor(Math.random()*batches_x.length)]);
+          this.backpropagate(batches_x[Math.floor(Math.random()*batches_x.length)], batches_y[Math.floor(Math.random()*batches_y.length)], e);
+          console.log("Epoch "+(e+1));
+          b++;
+          e += (b%(batches_x.length) === 0);
+          try {
+            on_batch_end();
+          } catch (TypeError) {}
+          if (e >= epochs) {
+            clearInterval(interval);
+          }
+        }, 50-40*accelerated_learning);
       },
       feedforward: function(x) {
         if (this.structure.length === 1) {
@@ -226,7 +244,7 @@
         }
         return this.layers[this.layers.length-1];
       },
-      backpropagate: function(data, labels, e) {
+      backpropagate: function(data, labels, e) {  // just pretend e is for batch ok
         var fs_source = [
           "precision mediump float;",
           "varying vec2 v_texcoord;"
@@ -258,42 +276,69 @@
           c.width = this.weights[0].columns;
           c.height = this.weights[0].rows;
           gl.viewport(0, 0, this.weights[0].columns, this.weights[0].rows);
-          fs_source = [
-            "precision mediump float;",
-            "varying vec2 v_texcoord;",
-            "uniform sampler2D layer;",
-            "uniform sampler2D weights;",
-            "uniform sampler2D gradient_data;",
-            "float e = "+e+".0;",
-            "vec4 w;",
-            "float sum;",
-            "float sign;",
-            "void main(){",
-            "  w = texture2D(weights, v_texcoord);",
-            "  sum = 0.0;",
-            "  for (float i = initial; i < 1.0; i+=increment){",
-            "    sum += texture2D(gradient_data, vec2(v_texcoord.x, i)).r*texture2D(layer, vec2(v_texcoord.y, i)).r+w.r*rr;",
-            "  }",
-            "  if (sum == 0.0 || abs(sum) == 1.0/0.0) {",
-            "    sign = 0.0;",
-            "  } else if (sum > 0.0) {",
-            "    sign = 1.0;",
-            "  } else {",
-            "    sign = -1.0;",
-            "  }",
-            "  if (e == 1.0) {",
-            "    gl_FragColor = vec4(w.r-sign*0.1, sign, 0.1, 0);",
-            "  } else {",
-            "    if (sign == w.g && sign != 0.0) {",
-            "      gl_FragColor = vec4(w.r-sign*w.b*1.5, sign, w.b*1.5, 0);",
-            "    } else if (sign != w.g) {",
-            "      gl_FragColor = vec4(w.r-sign*w.b/10.0, sign, w.b/10.0, 0);",
-            "    } else {",
-            "      gl_FragColor = vec4(w.r, sign, w.b, 0);",
-            "    }",
-            "  }",
-            "}"
-          ];
+          if (this.optimizer === "rprop") {
+            fs_source = [
+              "precision mediump float;",
+              "varying vec2 v_texcoord;",
+              "uniform sampler2D layer;",
+              "uniform sampler2D weights;",
+              "uniform sampler2D gradient_data;",
+              "float e = "+e+".0;",
+              "vec4 w;",
+              "float sum;",
+              "float sign;",
+              "void main(){",
+              "  w = texture2D(weights, v_texcoord);",
+              "  sum = 0.0;",
+              "  for (float i = initial; i < 1.0; i+=increment){",
+              "    sum += texture2D(gradient_data, vec2(v_texcoord.x, i)).r*texture2D(layer, vec2(v_texcoord.y, i)).r+w.r*rr;",
+              "  }",
+              "  if (sum == 0.0 || abs(sum) == 1.0/0.0) {",
+              "    sign = 0.0;",
+              "  } else if (sum > 0.0) {",
+              "    sign = 1.0;",
+              "  } else {",
+              "    sign = -1.0;",
+              "  }",
+              "  if (e == 1.0) {",
+              "    gl_FragColor = vec4(w.r-sign*0.1, sign, 0.1, 0);",
+              "  } else {",
+              "    if (sign == w.g && sign != 0.0) {",
+              "      gl_FragColor = vec4(w.r-sign*w.b*1.1, sign, w.b*1.1, 0);",
+              "    } else if (sign != w.g) {",
+              "      gl_FragColor = vec4(w.r-sign*w.b/1.5, sign, w.b/1.5, 0);",
+              "    } else {",
+              "      gl_FragColor = vec4(w.r, sign, w.b, 0);",
+              "    }",
+              "  }",
+              "}"
+            ];
+          } else {
+            fs_source = [
+              "precision mediump float;",
+              "varying vec2 v_texcoord;",
+              "uniform sampler2D layer;",
+              "uniform sampler2D weights;",
+              "uniform sampler2D gradient_data;",
+              "float e = "+e+".0;",
+              "vec4 w;",
+              "float sum;",
+              "float n;",
+              "void main(){",
+              "  w = texture2D(weights, v_texcoord);",
+              "  sum = 0.0; n = 0.0;",
+              "  for (float i = initial; i < 1.0; i+=increment){",
+              "    sum += texture2D(gradient_data, vec2(v_texcoord.x, i)).r*texture2D(layer, vec2(v_texcoord.y, i)).r+w.r*rr;",
+              "    n += 1.0;",
+              "  }",
+              "  if (e == 1.0) {",
+              "    gl_FragColor = vec4(w.r-0.0001*sum, 0, 0, 0);",
+              "  } else {",
+              "    gl_FragColor = vec4(w.r-0.0001*sum, 0, 0, 0);",
+              "  }",
+              "}"
+            ];
+          }
           fs_source[12] = fs_source[12].replace("initial", 0.5/data.rows);
           if (data.rows !== 1) {
             fs_source[12] = fs_source[12].replace("increment", 1/data.rows);
@@ -356,42 +401,69 @@
               c.width = this.weights[nx].columns;
               c.height = this.weights[nx].rows;
               gl.viewport(0, 0, this.weights[nx].columns, this.weights[nx].rows);
-              fs_source = [
-                "precision mediump float;",
-                "varying vec2 v_texcoord;",
-                "uniform sampler2D layer;",
-                "uniform sampler2D weights;",
-                "uniform sampler2D gradient_data;",
-                "float e = "+e+".0;",
-                "vec4 w;",
-                "float sum;",
-                "float sign;",
-                "void main(){",
-                "  w = texture2D(weights, v_texcoord);",
-                "  sum = 0.0;",
-                "  for (float i = initial; i < 1.0; i+=increment){",
-                "    sum += texture2D(gradient_data, vec2(v_texcoord.x, i)).r*texture2D(layer, vec2(v_texcoord.y, i)).r+w.r*rr;",
-                "  }",
-                "  if (sum == 0.0 || abs(sum) == 1.0/0.0) {",
-                "    sign = 0.0;",
-                "  } else if (sum > 0.0) {",
-                "    sign = 1.0;",
-                "  } else {",
-                "    sign = -1.0;",
-                "  }",
-                "  if (e == 1.0) {",
-                "    gl_FragColor = vec4(w.r-sign*0.1, sign, 0.1, 0.0);",
-                "  } else {",
-                "    if (sign == w.g && sign != 0.0) {",
-                "      gl_FragColor = vec4(w.r-sign*w.b*1.5, sign, w.b*1.5, 0);",
-                "    } else if (sign != w.g) {",
-                "      gl_FragColor = vec4(w.r-sign*w.b/10.0, sign, w.b/10.0, 0);",
-                "    } else {",
-                "      gl_FragColor = vec4(w.r, sign, w.b, 0);",
-                "    }",
-                "  }",
-                "}"
-              ];
+              if (this.optimizer === "rprop") {
+                fs_source = [
+                  "precision mediump float;",
+                  "varying vec2 v_texcoord;",
+                  "uniform sampler2D layer;",
+                  "uniform sampler2D weights;",
+                  "uniform sampler2D gradient_data;",
+                  "float e = "+e+".0;",
+                  "vec4 w;",
+                  "float sum;",
+                  "float sign;",
+                  "void main(){",
+                  "  w = texture2D(weights, v_texcoord);",
+                  "  sum = 0.0;",
+                  "  for (float i = initial; i < 1.0; i+=increment){",
+                  "    sum += texture2D(gradient_data, vec2(v_texcoord.x, i)).r*texture2D(layer, vec2(v_texcoord.y, i)).r+w.r*rr;",
+                  "  }",
+                  "  if (sum == 0.0 || abs(sum) == 1.0/0.0) {",
+                  "    sign = 0.0;",
+                  "  } else if (sum > 0.0) {",
+                  "    sign = 1.0;",
+                  "  } else {",
+                  "    sign = -1.0;",
+                  "  }",
+                  "  if (e == 1.0) {",
+                  "    gl_FragColor = vec4(w.r-sign*0.1, sign, 0.1, 0.0);",
+                  "  } else {",
+                  "    if (sign == w.g && sign != 0.0) {",
+                  "      gl_FragColor = vec4(w.r-sign*w.b*1.1, sign, w.b*1.1, 0);",
+                  "    } else if (sign != w.g) {",
+                  "      gl_FragColor = vec4(w.r-sign*w.b/1.5, sign, w.b/1.5, 0);",
+                  "    } else {",
+                  "      gl_FragColor = vec4(w.r, sign, w.b, 0);",
+                  "    }",
+                  "  }",
+                  "}"
+                ];
+              } else {
+                fs_source = [
+                  "precision mediump float;",
+                  "varying vec2 v_texcoord;",
+                  "uniform sampler2D layer;",
+                  "uniform sampler2D weights;",
+                  "uniform sampler2D gradient_data;",
+                  "float e = "+e+".0;",
+                  "vec4 w;",
+                  "float sum;",
+                  "float n;",
+                  "void main(){",
+                  "  w = texture2D(weights, v_texcoord);",
+                  "  sum = 0.0; n = 0.0;",
+                  "  for (float i = initial; i < 1.0; i+=increment){",
+                  "    sum += texture2D(gradient_data, vec2(v_texcoord.x, i)).r*texture2D(layer, vec2(v_texcoord.y, i)).r+w.r*rr;",
+                  "    n += 1.0;",
+                  "  }",
+                  "  if (e == 1.0) {",
+                  "    gl_FragColor = vec4(w.r-0.0001*sum, 0, 0, 0);",
+                  "  } else {",
+                  "    gl_FragColor = vec4(w.r-0.0001*sum, 0, 0, 0);",
+                  "  }",
+                  "}"
+                ];
+              }
               fs_source[12] = fs_source[12].replace("initial", 0.5/data.rows);
               if (data.rows !== 1) {
                 fs_source[12] = fs_source[12].replace("increment", 1/data.rows);
@@ -474,42 +546,69 @@
               c.width = this.weights[nx].columns;
               c.height = this.weights[nx].rows;
               gl.viewport(0, 0, this.weights[nx].columns, this.weights[nx].rows);
-              fs_source = [
-                "precision mediump float;",
-                "varying vec2 v_texcoord;",
-                "uniform sampler2D layer;",
-                "uniform sampler2D weights;",
-                "uniform sampler2D gradient_data;",
-                "float e = "+e+".0;",
-                "vec4 w;",
-                "float sum;",
-                "float sign;",
-                "void main(){",
-                "  w = texture2D(weights, v_texcoord);",
-                "  sum = 0.0;",
-                "  for (float i = initial; i < 1.0; i+=increment){",
-                "    sum += texture2D(gradient_data, vec2(v_texcoord.x, i)).r*texture2D(layer, vec2(v_texcoord.y, i)).r+w.r*rr;",
-                "  }",
-                "  if (sum == 0.0 || abs(sum) == 1.0/0.0) {",
-                "    sign = 0.0;",
-                "  } else if (sum > 0.0) {",
-                "    sign = 1.0;",
-                "  } else {",
-                "    sign = -1.0;",
-                "  }",
-                "  if (e == 1.0) {",
-                "    gl_FragColor = vec4(w.r-sign*0.1, sign, 0.1, 0.0);",
-                "  } else {",
-                "    if (sign == w.g && sign != 0.0) {",
-                "      gl_FragColor = vec4(w.r-sign*w.b*1.5, sign, w.b*1.5, 0);",
-                "    } else if (sign != w.g) {",
-                "      gl_FragColor = vec4(w.r-sign*w.b/10.0, sign, w.b/10.0, 0);",
-                "    } else {",
-                "      gl_FragColor = vec4(w.r, sign, w.b, 0);",
-                "    }",
-                "  }",
-                "}"
-              ];
+              if (this.optimizer === "rprop") {
+                fs_source = [
+                  "precision mediump float;",
+                  "varying vec2 v_texcoord;",
+                  "uniform sampler2D layer;",
+                  "uniform sampler2D weights;",
+                  "uniform sampler2D gradient_data;",
+                  "float e = "+e+".0;",
+                  "vec4 w;",
+                  "float sum;",
+                  "float sign;",
+                  "void main(){",
+                  "  w = texture2D(weights, v_texcoord);",
+                  "  sum = 0.0;",
+                  "  for (float i = initial; i < 1.0; i+=increment){",
+                  "    sum += texture2D(gradient_data, vec2(v_texcoord.x, i)).r*texture2D(layer, vec2(v_texcoord.y, i)).r+w.r*rr;",
+                  "  }",
+                  "  if (sum == 0.0 || abs(sum) == 1.0/0.0) {",
+                  "    sign = 0.0;",
+                  "  } else if (sum > 0.0) {",
+                  "    sign = 1.0;",
+                  "  } else {",
+                  "    sign = -1.0;",
+                  "  }",
+                  "  if (e == 1.0) {",
+                  "    gl_FragColor = vec4(w.r-sign*0.1, sign, 0.1, 0.0);",
+                  "  } else {",
+                  "    if (sign == w.g && sign != 0.0) {",
+                  "      gl_FragColor = vec4(w.r-sign*w.b*1.1, sign, w.b*1.1, 0);",
+                  "    } else if (sign != w.g) {",
+                  "      gl_FragColor = vec4(w.r-sign*w.b/1.5, sign, w.b/1.5, 0);",
+                  "    } else {",
+                  "      gl_FragColor = vec4(w.r, sign, w.b, 0);",
+                  "    }",
+                  "  }",
+                  "}"
+                ];
+              } else {
+                fs_source = [
+                  "precision mediump float;",
+                  "varying vec2 v_texcoord;",
+                  "uniform sampler2D layer;",
+                  "uniform sampler2D weights;",
+                  "uniform sampler2D gradient_data;",
+                  "float e = "+e+".0;",
+                  "vec4 w;",
+                  "float sum;",
+                  "float n;",
+                  "void main(){",
+                  "  w = texture2D(weights, v_texcoord);",
+                  "  sum = 0.0; n = 0.0;",
+                  "  for (float i = initial; i < 1.0; i+=increment){",
+                  "    sum += texture2D(gradient_data, vec2(v_texcoord.x, i)).r*texture2D(layer, vec2(v_texcoord.y, i)).r+w.r*rr;",
+                  "    n += 1.0;",
+                  "  }",
+                  "  if (e == 1.0) {",
+                  "    gl_FragColor = vec4(w.r-0.0001*sum, 0, 0, 0);",
+                  "  } else {",
+                  "    gl_FragColor = vec4(w.r-0.0001*sum, 0, 0, 0);",
+                  "  }",
+                  "}"
+                ];
+              }
               fs_source[12] = fs_source[12].replace("initial", 0.5/data.rows);
               if (data.rows !== 1) {
                 fs_source[12] = fs_source[12].replace("increment", 1/data.rows);
@@ -592,42 +691,69 @@
               c.width = this.weights[nx].columns;
               c.height = this.weights[nx].rows;
               gl.viewport(0, 0, this.weights[nx].columns, this.weights[nx].rows);
-              fs_source = [
-                "precision mediump float;",
-                "varying vec2 v_texcoord;",
-                "uniform sampler2D layer;",
-                "uniform sampler2D weights;",
-                "uniform sampler2D gradient_data;",
-                "float e = "+e+".0;",
-                "vec4 w;",
-                "float sum;",
-                "float sign;",
-                "void main(){",
-                "  w = texture2D(weights, v_texcoord);",
-                "  sum = 0.0;",
-                "  for (float i = initial; i < 1.0; i+=increment){",
-                "    sum += texture2D(gradient_data, vec2(v_texcoord.x, i)).r*texture2D(layer, vec2(v_texcoord.y, i)).r+w.r*rr;",
-                "  }",
-                "  if (sum == 0.0 || abs(sum) == 1.0/0.0) {",
-                "    sign = 0.0;",
-                "  } else if (sum > 0.0) {",
-                "    sign = 1.0;",
-                "  } else {",
-                "    sign = -1.0;",
-                "  }",
-                "  if (e == 1.0) {",
-                "    gl_FragColor = vec4(w.r-sign*0.1, sign, 0.1, 0.0);",
-                "  } else {",
-                "    if (sign == w.g && sign != 0.0) {",
-                "      gl_FragColor = vec4(w.r-sign*w.b*1.5, sign, w.b*1.5, 0);",
-                "    } else if (sign != w.g) {",
-                "      gl_FragColor = vec4(w.r-sign*w.b/10.0, sign, w.b/10.0, 0);",
-                "    } else {",
-                "      gl_FragColor = vec4(w.r, sign, w.b, 0);",
-                "    }",
-                "  }",
-                "}"
-              ];
+              if (this.optimizer === "rprop") {
+                fs_source = [
+                  "precision mediump float;",
+                  "varying vec2 v_texcoord;",
+                  "uniform sampler2D layer;",
+                  "uniform sampler2D weights;",
+                  "uniform sampler2D gradient_data;",
+                  "float e = "+e+".0;",
+                  "vec4 w;",
+                  "float sum;",
+                  "float sign;",
+                  "void main(){",
+                  "  w = texture2D(weights, v_texcoord);",
+                  "  sum = 0.0;",
+                  "  for (float i = initial; i < 1.0; i+=increment){",
+                  "    sum += texture2D(gradient_data, vec2(v_texcoord.x, i)).r*texture2D(layer, vec2(v_texcoord.y, i)).r+w.r*rr;",
+                  "  }",
+                  "  if (sum == 0.0 || abs(sum) == 1.0/0.0) {",
+                  "    sign = 0.0;",
+                  "  } else if (sum > 0.0) {",
+                  "    sign = 1.0;",
+                  "  } else {",
+                  "    sign = -1.0;",
+                  "  }",
+                  "  if (e == 1.0) {",
+                  "    gl_FragColor = vec4(w.r-sign*0.1, sign, 0.1, 0.0);",
+                  "  } else {",
+                  "    if (sign == w.g && sign != 0.0) {",
+                  "      gl_FragColor = vec4(w.r-sign*w.b*1.1, sign, w.b*1.1, 0);",
+                  "    } else if (sign != w.g) {",
+                  "      gl_FragColor = vec4(w.r-sign*w.b/1.5, sign, w.b/1.5, 0);",
+                  "    } else {",
+                  "      gl_FragColor = vec4(w.r, sign, w.b, 0);",
+                  "    }",
+                  "  }",
+                  "}"
+                ];
+              } else {
+                fs_source = [
+                  "precision mediump float;",
+                  "varying vec2 v_texcoord;",
+                  "uniform sampler2D layer;",
+                  "uniform sampler2D weights;",
+                  "uniform sampler2D gradient_data;",
+                  "float e = "+e+".0;",
+                  "vec4 w;",
+                  "float sum;",
+                  "float n;",
+                  "void main(){",
+                  "  w = texture2D(weights, v_texcoord);",
+                  "  sum = 0.0; n = 0.0;",
+                  "  for (float i = initial; i < 1.0; i+=increment){",
+                  "    sum += texture2D(gradient_data, vec2(v_texcoord.x, i)).r*texture2D(layer, vec2(v_texcoord.y, i)).r+w.r*rr;",
+                  "    n += 1.0;",
+                  "  }",
+                  "  if (e == 1.0) {",
+                  "    gl_FragColor = vec4(w.r-0.0001*sum, 0, 0, 0);",
+                  "  } else {",
+                  "    gl_FragColor = vec4(w.r-0.0001*sum, 0, 0, 0);",
+                  "  }",
+                  "}"
+                ];
+              }
               fs_source[12] = fs_source[12].replace("initial", 0.5/data.rows);
               if (data.rows !== 1) {
                 fs_source[12] = fs_source[12].replace("increment", 1/data.rows);
@@ -674,6 +800,13 @@
             }
           }
         }
+      },
+      compare(guesses, y) {
+        var n = 0;
+        for (var i = 0; i < y.length; i++) {
+          n += guesses[i].indexOf(Math.max(...guesses[i])) === y[i].indexOf(1);
+        }
+        return n/y.length;
       }
     }
     return self;
