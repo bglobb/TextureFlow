@@ -8,38 +8,53 @@
   <body>
     <script src="txf.js" charset="utf-8"></script>
     <script type="text/javascript">
-      let set = mnist.set(7000, 1000);
-      let training_set = set.training;
-      let test_set = set.test
-      var train_x = [];
-      var train_y = [];
-      var test_x = [];
-      var test_y = [];
-      for (let i = 0; i < training_set.length; i++) {
-        train_x.push(training_set[i].input);
-        train_y.push(training_set[i].output);
-      }
-      for (let i = 0; i < test_set.length; i++) {
-        test_x.push(test_set[i].input);
-        test_y.push(test_set[i].output);
-      }
-      const data = txf.texture(train_x);
-      const labels = txf.texture(train_y);
+function setup_MNIST(training, test) {
+  var set = mnist.set(training, test);  // 7000 training samples, 1000 test samples
+  var training_set = set.training;
+  var test_set = set.test
+  var train_x = [];
+  var train_y = [];
+  var test_x = [];
+  var test_y = [];
+  for (let i = 0; i < training_set.length; i++) {
+    train_x.push(training_set[i].input);
+    train_y.push(training_set[i].output);
+  }
+  for (let i = 0; i < test_set.length; i++) {
+    test_x.push(test_set[i].input);
+    test_y.push(test_set[i].output);
+  }
+  return [train_x, train_y, test_x, test_y];
+}
 
-      const model = txf.sequential([{nodes: 10, input_size: 784}]);  // Logistic regression
-      model.compile();
-      console.log("Training...");
-      model.fit(data, labels, epochs=100, regularization_rate=0.01);
+function pixelate(x) {
+  var pixelated = [];
+  for (var n = 0; n < x.length; n++) {
+    pixelated.push([]);
+    for (var i = 0; i < 28; i+=4) {
+      for (var j = 0; j < 28; j+=4) {
+        var sum = 0;
+        for (var k = i; k < i+4; k++) {
+          for (var l = j; l < j+4; l++) {
+            sum += x[n][k*28+l];
+          }
+        }
+        pixelated[n].push(sum/16);
+      }
+    }
+  }
+  return pixelated;
+}
+alert("Trains a neural network on the MNIST dataset using your graphics card.");
+var [train_x, train_y, test_x, test_y] = setup_MNIST(7000, 1000);
+// train_x = pixelate(train_x);
+// test_x = pixelate(test_x);
+const data = txf.texture(train_x);
+const labels = txf.texture(train_y);
 
-      var guesses = model.feedforward(txf.column_append(txf.texture(test_x))).to_array();
-      function compare(n) {
-        return guesses[n].indexOf(Math.max(...guesses[n])) === test_y[n].indexOf(1)
-      }
-      var n = 0;
-      for (var i = 0; i < test_y.length; i++) {
-        n += compare(i);
-      }
-      console.log("Accuracy on test data: "+n/test_y.length)
+const model = txf.sequential([{nodes: 32, input_size: 784}, {nodes: 10}]);  // Change input size to 49 if you decide to pixelate
+model.compile();
+model.fit(data, labels, epochs=1000, batch_size=7000, regularization_rate="0.01", optimizer="rprop", accelerated_learning=true);
     </script>
   </body>
 </html>
